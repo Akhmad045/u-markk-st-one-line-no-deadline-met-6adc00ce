@@ -53,6 +53,8 @@ def emit(path=TARGET):
     if got != wanted:
         raise SystemExit("wrote %d bytes but the file holds %d"
                          % (len(wanted), len(got)))
+    if got.endswith(b"\n"):
+        raise SystemExit("written file ends with a newline")
     if gate(got.decode("utf-8")):
         raise SystemExit("written file fails the gate on re-read")
     return path
@@ -116,7 +118,10 @@ def main(argv=None):
         return run_checks()
     out = TARGET
     if "--output" in args:
-        out = Path(args[args.index("--output") + 1])
+        pos = args.index("--output") + 1
+        if pos >= len(args):
+            raise SystemExit("--output needs a path after it")
+        out = Path(args[pos])
     emit(out)
     print("wrote %d characters to %s" % (len(JOKE), out))
     return 0
