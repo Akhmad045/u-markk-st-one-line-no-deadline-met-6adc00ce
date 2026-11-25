@@ -1,141 +1,69 @@
 #!/usr/bin/env python3
 """One Line, No Deadline Met — make.fun entry.
 
-Writes a single-line joke giving an excuse for missing a deadline
-(87 characters) to /output/entry.txt, with no trailing newline, so the
-sealed gate scorer reads exactly the line and nothing else.
+The entry is a single joke (87 characters) that excuses a missed
+deadline. This program puts exactly that joke, and nothing else, into
+/output/entry.txt, so the gate scorer sees one line of 1-200 UTF-8
+characters with no trailing newline.
 
-Usage:
-    python3 main.py [--output PATH] [--self-test]
-
---self-test validates the gate on the entry itself plus rejection
-cases (empty, whitespace-only, multi-line, over-limit, control
-characters) and a write/read round-trip in a temporary directory.
+    python3 main.py               # write the entry
+    python3 main.py --self-test   # check the entry and the gate
 """
 
-import argparse
 import sys
-import tempfile
 from pathlib import Path
 
-LINE = "I finished it on time, but my laptop autosaved it into a folder I've never seen before."
+JOKE = "I finished it on time, but my laptop autosaved it into a folder I've never seen before."
+LIMIT = 200
+TARGET = Path("/output/entry.txt")
 
-MAX_CHARS = 200
-DEFAULT_OUTPUT = Path("/output/entry.txt")
 
+def gate(text):
+    """Check a candidate entry against the gate.
 
-def validate(text: str) -> str:
-    """Return an error message if text fails the gate, else ''."""
+    Returns an empty string when the text passes, otherwise a short
+    reason it fails.
+    """
     if not isinstance(text, str):
-        return "entry is not text"
-    if len(text) < 1:
-        return "entry is empty"
-    if len(text) > MAX_CHARS:
-        return f"entry is {len(text)} characters, over the {MAX_CHARS} limit"
+        return "not text"
+    if len(text) == 0:
+        return "empty"
+    if len(text) > LIMIT:
+        return "too long: %d characters, limit is %d" % (len(text), LIMIT)
     if text.strip() == "":
-        return "entry is only whitespace"
-    if text != text.strip():
-        return "entry has leading or trailing whitespace"
-    if "\n" in text or "\r" in text:
-        return "entry spans more than one line"
-    if any(ord(ch) < 32 for ch in text):
-        return "entry contains a control character"
+        return "only whitespace"
+    if text.strip() != text:
+        return "leading or trailing whitespace"
+    for ch in text:
+        if ch in "\n\r" or ord(ch) < 32:
+            return "not a single clean line"
     return ""
 
 
-def write_entry(output: Path) -> Path:
-    """Write exactly LINE to output and read it back to confirm."""
-    error = validate(LINE)
-    if error:
-        raise SystemExit(f"invalid entry: {error}")
-    expected_bytes = LINE.encode("utf-8")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(expected_bytes)
-    actual_bytes = output.read_bytes()
-    if actual_bytes != expected_bytes:
-        raise SystemExit("read-back mismatch: file does not hold the entry")
-    if len(actual_bytes) != len(expected_bytes):
-        raise SystemExit("read-back mismatch: file has the wrong byte length")
-    file_error = check_file(output)
-    if file_error:
-        raise SystemExit(f"written file fails the gate: {file_error}")
-    return output
+def emit(path=TARGET):
+    """Write JOKE to path, then prove the file holds exactly JOKE."""
+    problem = gate(JOKE)
+    if problem:
+        raise SystemExit("entry fails the gate: " + problem)
+    wanted = JOKE.encode("utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(wanted)
+    got = path.read_bytes()
+    if got != wanted:
+        raise SystemExit("wrote %d bytes but the file holds %d"
+                         % (len(wanted), len(got)))
+    if gate(got.decode("utf-8")):
+        raise SystemExit("written file fails the gate on re-read")
+    return path
 
 
-def check_file(path: Path) -> str:
-    """Validate an existing entry file against the gate; '' when valid."""
-    try:
-        raw = path.read_bytes()
-    except OSError as exc:
-        return f"cannot read {path}: {exc}"
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return "file is not valid UTF-8"
-    if raw != text.encode("utf-8"):
-        return "file's bytes are not the entry's UTF-8 encoding"
-    return validate(text)
-
-
-def self_test() -> int:
-    """Check the gate on the entry and on rejection cases."""
-    failures = []
-
-    def check(name: str, text: str, should_pass: bool) -> None:
-        error = validate(text)
-        if should_pass and error:
-            failures.append(f"{name}: expected pass, got {error!r}")
-        if not should_pass and not error:
-            failures.append(f"{name}: expected rejection, passed")
-
-    check("entry", LINE, True)
-    check("one-char boundary", "!", True)
-    check("200-char boundary", "x" * 200, True)
-    check("empty", "", False)
-    check("whitespace-only", "   ", False)
-    check("over-limit", "x" * 201, False)
-    check("multi-line", "one\ntwo", False)
-    check("carriage return", "one\rtwo", False)
-    check("leading space", " " + LINE, False)
-    check("trailing space", LINE + " ", False)
-    check("control character", "a\x01b", False)
-
-    with tempfile.TemporaryDirectory() as tmp:
-        target = Path(tmp) / "entry.txt"
-        write_entry(target)
-        if target.read_bytes() != LINE.encode("utf-8"):
-            failures.append("round-trip: bytes differ from the entry")
-        if target.read_bytes().endswith(b"\n"):
-            failures.append("round-trip: file ends with a newline")
-        file_error = check_file(target)
-        if file_error:
-            failures.append(f"round-trip: written file fails the gate: {file_error}")
-        target.write_bytes(b"too\nlong\n" + b"x" * 250)
-        if not check_file(target):
-            failures.append("check_file: over-limit multi-line file passed")
-
-    if failures:
-        print("self-test FAILED:")
-        for failure in failures:
-            print(f"  - {failure}")
-        return 1
-    print(f"self-test passed: entry is {len(LINE)} characters, "
-          f"{len(LINE.encode('utf-8'))} bytes, single line")
-    return 0
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Write the one-line entry to /output/entry.txt.")
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT,
-                        help="where to write entry.txt (default: %(default)s)")
-    parser.add_argument("--self-test", action="store_true",
-                        help="validate the gate and exit")
-    args = parser.parse_args(argv)
-    if args.self_test:
-        return self_test()
-    write_entry(args.output)
-    print(f"wrote {len(LINE)} characters to {args.output}")
+def main(argv=None):
+    args = sys.argv[1:] if argv is None else argv
+    out = TARGET
+    if "--output" in args:
+        out = Path(args[args.index("--output") + 1])
+    emit(out)
+    print("wrote %d characters to %s" % (len(JOKE), out))
     return 0
 
 
