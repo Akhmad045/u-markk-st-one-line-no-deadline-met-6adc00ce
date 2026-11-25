@@ -56,6 +56,9 @@ def write_entry(output: Path) -> Path:
         raise SystemExit("read-back mismatch: file does not hold the entry")
     if len(actual_bytes) != len(expected_bytes):
         raise SystemExit("read-back mismatch: file has the wrong byte length")
+    file_error = check_file(output)
+    if file_error:
+        raise SystemExit(f"written file fails the gate: {file_error}")
     return output
 
 
