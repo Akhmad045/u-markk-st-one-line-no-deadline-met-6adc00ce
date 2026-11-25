@@ -11,6 +11,7 @@ characters with no trailing newline.
 """
 
 import sys
+import tempfile
 from pathlib import Path
 
 JOKE = "I finished it on time, but my laptop autosaved it into a folder I've never seen before."
@@ -57,8 +58,62 @@ def emit(path=TARGET):
     return path
 
 
+CASES = [
+    # (label, text, True when the gate should accept it)
+    ("entry", JOKE, True),
+    ("one character", "!", True),
+    ("exactly at the limit", "x" * 200, True),
+    ("empty", "", False),
+    ("only spaces", "   ", False),
+    ("one over the limit", "x" * 201, False),
+    ("two lines", "one\ntwo", False),
+    ("carriage return", "one\rtwo", False),
+    ("leading space", " " + JOKE, False),
+    ("trailing space", JOKE + " ", False),
+    ("control character", "a\x01b", False),
+]
+
+
+def run_checks():
+    """Run the gate over JOKE and every rejection case.
+
+    Returns 0 when everything behaves, 1 otherwise, printing each
+    failure.
+    """
+    bad = []
+    for label, text, should_pass in CASES:
+        problem = gate(text)
+        if should_pass and problem:
+            bad.append("%s: should pass, gate says %r" % (label, problem))
+        if not should_pass and not problem:
+            bad.append("%s: should fail, gate passed it" % label)
+    with tempfile.TemporaryDirectory() as tmp:
+        target = Path(tmp) / "entry.txt"
+        emit(target)
+        blob = target.read_bytes()
+        if blob != JOKE.encode("utf-8"):
+            bad.append("round-trip: bytes differ from the entry")
+        if blob.endswith(b"\n"):
+            bad.append("round-trip: file ends with a newline")
+        if gate(blob.decode("utf-8")):
+            bad.append("round-trip: written file fails the gate")
+        target.write_bytes(b"too\nlong\n" + b"x" * 250)
+        if not gate(target.read_bytes().decode("utf-8")):
+            bad.append("gate: over-limit multi-line file passed")
+    if bad:
+        print("self-test FAILED:")
+        for item in bad:
+            print("  - " + item)
+        return 1
+    print("self-test passed: entry is %d characters, %d bytes, "
+          "single line" % (len(JOKE), len(JOKE.encode("utf-8"))))
+    return 0
+
+
 def main(argv=None):
     args = sys.argv[1:] if argv is None else argv
+    if "--self-test" in args:
+        return run_checks()
     out = TARGET
     if "--output" in args:
         out = Path(args[args.index("--output") + 1])
